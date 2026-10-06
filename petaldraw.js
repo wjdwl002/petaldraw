@@ -91,6 +91,7 @@
   function lerp(a, b, t) { return a + (b - a) * t; }
   function smoothstep(a, b, x) { var t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); }
   function round2(x) { return Math.round(x * 100) / 100; }
+  function round1(x) { return Math.round(x * 10) / 10; }
 
   function cubicPts(p0, p1, p2, p3, n) {
     var out = [];
@@ -370,7 +371,77 @@
       ? r.chance(0.5) ? { inner: hslToHex(r.range(38, 48), 65, 66), outer: hslToHex(r.range(38, 48), 60, 74) }  // golden disc
                       : { inner: hslToHex(r.range(20, 30), 30, 52), outer: hslToHex(r.range(25, 35), 35, 64) }   // brown disc
       : { inner: hslToHex(r.range(48, 56), 75, 72), outer: hslToHex(r.range(48, 56), 70, 80) };
-    return { family: fam[0], petal: petal, green: green, center: center };
+    var anther = r.chance(0.8)
+      ? hslToHex(r.range(40, 52), r.range(65, 80), r.range(58, 66))      // golden pollen
+      : hslToHex(r.pick([285, 15, 340]), r.range(25, 35), r.range(42, 50)); // dark anthers
+    var flat = {
+      anther: anther,
+      filament: hslToHex(hue, sat * 0.25, 92),
+      pistil: hslToHex(r.range(80, 105), r.range(30, 42), r.range(70, 76)),
+      stigma: hslToHex(r.range(45, 60), r.range(45, 60), r.range(74, 80)),
+      bud: mixHex(center.inner, '#4a3424', r.range(0.2, 0.4)),
+    };
+    return { family: fam[0], petal: petal, green: green, center: center, flat: flat };
+  }
+
+  function mixHex(a, b, t) {
+    var pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16), out = '#';
+    for (var sh = 16; sh >= 0; sh -= 8) {
+      var v = Math.round(lerp((pa >> sh) & 255, (pb >> sh) & 255, t));
+      out += ('0' + v.toString(16)).slice(-2);
+    }
+    return out;
+  }
+
+  // ------------------------------------------------------------------ genome: center and line detail
+
+  // Stamens follow A, the pistil follows G; a composite head gets a disc of florets instead.
+  function genCenter(r, f, h) {
+    var R = h.radius;
+    var rc = h.whorls.reduce(function (m, w) { return Math.min(m, w.r0); }, Infinity);
+    if (h.type === 'radiate') {
+      return {
+        disc: {
+          dome: r.weighted([[r.range(0.08, 0.3), 70], [r.range(0.5, 0.9), 30]]), // height / radius; high = coneflower
+          floretSize: r.range(0.075, 0.11),  // floret spacing / disc radius
+          budFraction: r.range(0.3, 0.65),   // inner florets still closed
+          floret: r.pick(['star', 'ring']),  // open florets: 5-lobed star or round
+        },
+        stamens: null, pistil: null,
+      };
+    }
+    var nA = f.A.n === Infinity ? r.int(28, 64) : f.A.n;
+    var nG = f.G.n === Infinity ? r.int(14, 40) : f.G.n;
+    return {
+      disc: null,
+      stamens: {
+        count: nA,
+        spiral: nA > 12,                       // many stamens: golden-angle spiral; few: one ring
+        length: R * r.range(0.13, 0.3),
+        elevation: r.range(0.75, 1.35),        // angle of the filament above the flower plane
+        spread: r.range(0.2, 0.7),             // outer stamens lean further out
+        curve: r.range(-0.3, 0.5),             // filaments bend outward toward the anther
+        anther: r.range(2.2, 3.8),
+        antherShape: r.pick(['round', 'oblong']),
+      },
+      pistil: {
+        carpels: nG,
+        fused: f.G.fused || nG === 1,
+        superior: f.G.position === 'superior',
+        many: f.G.n === Infinity,
+        ovary: rc * r.range(0.32, 0.5),
+        style: R * r.range(0.1, 0.32),
+        stigma: nG === 1 ? 'capitate' : r.pick(['capitate', 'lobed', 'branched']),
+      },
+    };
+  }
+
+  function genDetail(r) {
+    return {
+      veinSpacing: r.range(5, 8.5),    // drawing units between lateral veins at the widest point
+      veinReach: r.range(0.72, 0.92),  // how far lateral veins run toward the tip
+      baseShade: r.range(0.14, 0.3),   // length of the hatch strokes at the petal base, fraction of length
+    };
   }
 
   function makeGenome(seed) {
@@ -380,8 +451,10 @@
     var pose = genPose(makeRng(seed, 'pose'), formula);
     var name = genName(makeRng(seed, 'name'), formula, head);
     var color = genColor(makeRng(seed, 'color'), formula, head);
+    var center = genCenter(makeRng(seed, 'center'), formula, head);
+    var detail = genDetail(makeRng(seed, 'detail'));
     return {
-      version: 1,
+      version: 2,
       seed: seed,
       name: name,
       formula: formula,
@@ -389,7 +462,9 @@
       head: head,
       pose: pose,
       color: color,
-      // reserved for later steps: center (2), stem/leaves (3), inflorescence (4), shading (5)
+      center: center,
+      detail: detail,
+      // reserved for later steps: stem/leaves, inflorescence
     };
   }
 
@@ -436,7 +511,7 @@
     pts = resample(pts, Math.max(0.6, L / 160));
 
     // every petal gets a slight low-frequency wobble; frilled petals also get a ruffle near the tip
-    perturbEdge(pts, L, W, rng, W * 0.03, L * 0.35, 0.15);
+    perturbEdge(pts, L, W, rng, W * 0.012, L * 0.4, 0.2);
     if (shape.frill) perturbEdge(pts, L, W, rng, W * shape.frill.amp, L * shape.frill.wavelength, 0.4);
     return pts;
   }
@@ -455,6 +530,72 @@
       disp.push([(-ty / tn) * d, (tx / tn) * d]);
     }
     for (var j = 0; j < pts.length; j++) { pts[j][0] += disp[j][0]; pts[j][1] += disp[j][1]; }
+  }
+
+  // Half-width of an outline along s, per side, smoothed. side = 1 for t > 0, -1 for t < 0.
+  function widthProfile(pts, L) {
+    var NB = 48;
+    var prof = [[], []];
+    for (var b = 0; b <= NB; b++) { prof[0].push(-1); prof[1].push(-1); }
+    pts.forEach(function (p) {
+      var bin = clamp(Math.round((p[0] / L) * NB), 0, NB), k = p[1] >= 0 ? 0 : 1;
+      prof[k][bin] = Math.max(prof[k][bin], Math.abs(p[1]));
+    });
+    prof = prof.map(function (arr) {
+      // fill empty bins from their neighbours, then smooth twice
+      for (var i = 0; i <= NB; i++) {
+        if (arr[i] >= 0) continue;
+        var a = i - 1, c = i + 1;
+        while (a >= 0 && arr[a] < 0) a--;
+        while (c <= NB && arr[c] < 0) c++;
+        arr[i] = a < 0 ? Math.max(arr[c], 0) : c > NB ? arr[a] : lerp(arr[a], arr[c], (i - a) / (c - a));
+      }
+      for (var pass = 0; pass < 2; pass++) {
+        arr = arr.map(function (v, j) { return (arr[Math.max(j - 1, 0)] + 2 * v + arr[Math.min(j + 1, NB)]) / 4; });
+      }
+      return arr;
+    });
+    return function (side, s) {
+      var arr = prof[side > 0 ? 0 : 1], x = clamp(s / L, 0, 1) * NB, i = Math.min(Math.floor(x), NB - 1);
+      return lerp(arr[i], arr[i + 1], x - i);
+    };
+  }
+
+  // Venation in petal-local coordinates: a midrib plus lateral veins that follow the
+  // petal's width (t = fraction * half-width), so they fan out and converge toward the tip.
+  // `shade` adds short hatch strokes between the veins at the base.
+  function petalVeins(shape, L, outline, rng, detail, opts) {
+    var hw = widthProfile(outline, L), W = (shape.width * L) / 2, step = L / 70, lines = [];
+    var tipStop = shape.tip === 'notched' || shape.tip === 'toothed' ? 1 - shape.notch - 0.06 : 0.92;
+    var inside = function (p) { return insidePoly(outline, p[0], p[1]); };
+    function trace(s0, s1, frac, side, stopNarrow) {
+      var pts = [];
+      for (var s = s0; s <= s1; s += step) {
+        var w = hw(side, s);
+        if (stopNarrow && s > L * 0.45 && w < W * 0.08) break;
+        var p = [s, side * frac * w];
+        if (!inside(p)) { if (pts.length) break; continue; }
+        pts.push(p);
+      }
+      if (pts.length > 2) lines.push(pts);
+    }
+    trace(L * 0.015, L * tipStop * rng.range(0.85, 0.97), 0, 1, false);
+    var k = clamp(Math.round(W / detail.veinSpacing), 1, opts.maxVeins || 9);
+    [1, -1].forEach(function (side) {
+      for (var j = 1; j <= k; j++) {
+        var f = j / (k + 1);
+        var reach = detail.veinReach * (1 - 0.35 * f * f) * rng.range(0.88, 1.04);
+        trace(L * (0.02 + 0.06 * f), L * Math.min(tipStop, reach), f * 0.97, side, true);
+      }
+      if (opts.shade) {
+        for (var m = 0; m <= k; m++) {
+          var g = (m + 0.5) / (k + 1);
+          if (g > 0.95) continue;
+          trace(L * 0.02, L * detail.baseShade * (1 - 0.45 * g) * rng.range(0.6, 1.1), g, side, false);
+        }
+      }
+    });
+    return lines;
   }
 
   // ------------------------------------------------------------------ geometry: petal in 3D
@@ -504,7 +645,7 @@
   // ------------------------------------------------------------------ anatomical parts
 
   // Step 1: perianth whorls (bracts, sepals, petals, tepals, rays). One item per organ.
-  function drawPerianth(g, rng, project) {
+  function drawPerianth(g, rng, vrng, project) {
     var h = g.head, items = [];
     h.whorls.forEach(function (w) {
       for (var i = 0; i < w.count; i++) {
@@ -528,26 +669,193 @@
         // imbricate/contort -> each organ slightly above the previous one.
         var bias = w.layer * 0.5 + (h.aestivation === 'valvate' ? 0 : (i / w.count) * 0.3);
         var poly = scr.map(function (p) { return [p[0], p[1]]; });
-        items.push({ part: w.organ, role: w.organ === 'sepal' || w.organ === 'bract' ? 'green' : 'petal', depth: mid[2] + bias, outline: poly, strokes: [poly] });
+        var green = w.organ === 'sepal' || w.organ === 'bract';
+        var veins = petalVeins(shape, L, outline, vrng, g.detail, { shade: !green, maxVeins: w.organ === 'bract' ? 1 : green ? 3 : 9 });
+        var details = veins.map(function (line) {
+          return line.map(function (p) { var q = project(bendPoint(p, sp, w.r0, theta, shape.cupAcross, W)); return [q[0], q[1]]; });
+        });
+        items.push({ part: w.organ, role: green ? 'green' : 'petal', depth: mid[2] + bias, outline: poly, strokes: [poly], details: details });
       }
     });
     return items;
   }
 
-  // Placeholder receptacle until step 2 (stamens, pistil, phyllotactic florets).
-  function drawCenterPlaceholder(g, project) {
-    var r = g.head.whorls.reduce(function (m, w) { return Math.min(m, w.r0); }, Infinity);
-    var ring = function (rad, z) {
+  // Flower center: receptacle, stamens and pistil, or the disc of a composite head.
+  // Depth: the receptacle sits one center-radius nearer than its nearest rim point, so
+  // petal bases pass behind it. Other center parts use their true depth plus that radius,
+  // and never fall behind the receptacle. Front petals of a deep, tilted cup can still
+  // cover the center.
+  function drawCenter(g, rng, project) {
+    var h = g.head, c = g.center, items = [];
+    var rc = h.whorls.reduce(function (m, w) { return Math.min(m, w.r0); }, Infinity);
+    var xy = function (p) { return [p[0], p[1]]; };
+    var circle3 = function (cx, cy, z, rad, n) {
       var pts = [];
-      for (var i = 0; i <= 72; i++) { var a = (i / 72) * TAU; pts.push(project([rad * Math.cos(a), rad * Math.sin(a), z])); }
+      for (var i = 0; i <= n; i++) { var a = (i / n) * TAU; pts.push(xy(project([cx + rad * Math.cos(a), cy + rad * Math.sin(a), z]))); }
       return pts;
     };
-    var outer = ring(r, 0);
-    // The receptacle carries the stamens and pistil, which stand above the petal bases:
-    // place it one radius nearer than its nearest rim point so petal claws pass behind it.
-    var depth = outer.reduce(function (m, p) { return Math.max(m, p[2]); }, -Infinity) + r;
-    var flat = function (pts) { return pts.map(function (p) { return [p[0], p[1]]; }); };
-    return [{ part: 'center', role: 'center', depth: depth, outline: flat(outer), strokes: [flat(outer), flat(ring(r * 0.45, 0))] }];
+    var ellipse2 = function (cx, cy, ra, rb, rot, n) {
+      var pts = [], cr = Math.cos(rot), sr = Math.sin(rot);
+      for (var i = 0; i <= n; i++) {
+        var a = (i / n) * TAU, x = ra * Math.cos(a), y = rb * Math.sin(a);
+        pts.push([cx + x * cr - y * sr, cy + x * sr + y * cr]);
+      }
+      return pts;
+    };
+    var rimDepth = circle3(0, 0, 0, rc, 48).reduce(function (m, p, i) {
+      var a = (i / 48) * TAU; return Math.max(m, project([rc * Math.cos(a), rc * Math.sin(a), 0])[2]);
+    }, -Infinity);
+    var recDepth = rimDepth + rc;
+    var add = function (it, d) {
+      it.depth = d === 'receptacle' ? recDepth : Math.max(d + rc, recDepth + 0.01 + 0.001 * d);
+      items.push(it);
+    };
+    // thin occluder around a projected polyline so lines behind a filament or style are hidden
+    var ribbon = function (line, wdt) {
+      var left = [], right = [];
+      for (var i = 0; i < line.length; i++) {
+        var p = line[Math.min(i + 1, line.length - 1)], q = line[Math.max(i - 1, 0)];
+        var tx = p[0] - q[0], ty = p[1] - q[1], tn = Math.hypot(tx, ty) || 1;
+        left.push([line[i][0] - (ty / tn) * wdt, line[i][1] + (tx / tn) * wdt]);
+        right.push([line[i][0] + (ty / tn) * wdt, line[i][1] - (tx / tn) * wdt]);
+      }
+      return left.concat(right.reverse());
+    };
+
+    if (c.disc) {
+      // composite head: florets on a dome, placed by the golden angle
+      var D = c.disc, Rd = rc * 1.05, hd = Rd * D.dome, sp = Rd * D.floretSize;
+      var N = Math.round(Math.pow(Rd / sp, 2) * 0.9);
+      var rim = circle3(0, 0, 0, Rd, 72);
+      add({ part: 'disc', role: 'center', outline: rim, strokes: [], details: [] }, 'receptacle');
+      for (var i = 0; i < N; i++) {
+        var rr = Rd * Math.sqrt((i + 0.5) / N), a = i * GOLDEN_ANGLE, z = hd * (1 - (rr / Rd) * (rr / Rd));
+        var x = rr * Math.cos(a), y = rr * Math.sin(a), size = sp * 0.5 * (0.75 + 0.35 * rr / Rd);
+        var bud = rr / Rd < D.budFraction, poly = [], rot = rng.range(0, TAU);
+        var lobes = bud || D.floret === 'ring' ? 0 : 5, n = lobes ? 10 : 9;
+        for (var k = 0; k <= n; k++) {
+          var ang = rot + (k / n) * TAU, rad = lobes ? (k % 2 ? size * 0.55 : size) : size * (bud ? 0.8 : 1);
+          poly.push(xy(project([x + rad * Math.cos(ang), y + rad * Math.sin(ang), z])));
+        }
+        var dt = lobes ? [] : bud ? [] : [circle3(x, y, z, size * 0.35, 8)];
+        add({ part: 'floret', role: bud ? 'bud' : 'center', outline: poly, strokes: [poly], details: dt }, project([x, y, z])[2]);
+      }
+      return items;
+    }
+
+    var P = c.pistil, S = c.stamens;
+    // receptacle / nectary disc under the stamens
+    // slightly larger than the petal attachment radius so no background shows between them
+    var rec = circle3(0, 0, 0, rc * 1.08, 60);
+    add({ part: 'receptacle', role: 'center', outline: rec, strokes: [rec], details: [] }, 'receptacle');
+
+    // --- pistil
+    var ov = P.ovary, pistilR = ov, top = [0, 0, 0];
+    var sphere = function (cx, cy, cz, rad, meridians, role, part) {
+      var cen = project([cx, cy, cz]), out = circle3sp(cen, rad);
+      var det = [];
+      for (var m = 0; m < meridians; m++) {
+        var phi = (m / meridians) * TAU, seg = [];
+        for (var t = 0; t <= 16; t++) {
+          var th = (t / 16) * Math.PI * 0.75;
+          var p = project([cx + rad * Math.sin(th) * Math.cos(phi), cy + rad * Math.sin(th) * Math.sin(phi), cz + rad * Math.cos(th)]);
+          if (p[2] - cen[2] > 0) seg.push(xy(p));
+          else if (seg.length) break;
+        }
+        if (seg.length > 2) det.push(seg);
+      }
+      add({ part: part, role: role, outline: out, strokes: [out], details: det }, cen[2] + rad);
+    };
+    var circle3sp = function (cen, rad) { return ellipse2(cen[0], cen[1], rad, rad, 0, 20); };
+
+    if (P.many) {
+      // many free carpels on a dome (buttercup / magnolia center)
+      var Rg = ov * 1.5, hg = Rg * 0.9, sg = Rg / Math.sqrt(P.carpels) * 0.85;
+      for (var j = 0; j < P.carpels; j++) {
+        var r1 = Rg * Math.sqrt((j + 0.5) / P.carpels), a1 = j * GOLDEN_ANGLE;
+        sphere(r1 * Math.cos(a1), r1 * Math.sin(a1), hg * (1 - (r1 / Rg) * (r1 / Rg)) + sg * 0.5, sg, 0, 'pistil', 'carpel');
+      }
+      pistilR = Rg;
+    } else if (!P.fused) {
+      // a ring of separate pistils
+      for (var q = 0; q < P.carpels; q++) {
+        var aq = (q / P.carpels) * TAU, rq = ov * 0.75, cxq = rq * Math.cos(aq), cyq = rq * Math.sin(aq), rad = ov * 0.5;
+        sphere(cxq, cyq, rad, rad, 0, 'pistil', 'carpel');
+        var st = [project([cxq, cyq, rad * 1.8]), project([cxq * 1.25, cyq * 1.25, rad * 1.8 + P.style * 0.35])];
+        var stl = st.map(xy);
+        add({ part: 'style', role: 'pistil', outline: ribbon(stl, 0.8), strokes: [stl], details: [] }, st[1][2]);
+        var tipq = st[1];
+        var sq = ellipse2(tipq[0], tipq[1], 1.6, 1.6, 0, 10);
+        add({ part: 'stigma', role: 'stigma', outline: sq, strokes: [sq], details: [] }, tipq[2] + 1);
+      }
+      pistilR = ov * 1.2;
+    } else {
+      if (P.superior) {
+        sphere(0, 0, ov * 0.75, ov, P.carpels > 1 ? P.carpels : 0, 'pistil', 'ovary');
+        top = [0, 0, ov * 1.6];
+      }
+      var lean = rng.range(-0.15, 0.15), styleLine = [];
+      for (var u = 0; u <= 10; u++) {
+        var tt = u / 10;
+        styleLine.push(project([top[0] + lean * P.style * tt * tt, top[1], top[2] + P.style * tt]));
+      }
+      var tip = styleLine[styleLine.length - 1], sl = styleLine.map(xy);
+      add({ part: 'style', role: 'pistil', outline: ribbon(sl, 1.1), strokes: [sl], details: [] }, styleLine[5][2]);
+      var tip3 = [top[0] + lean * P.style, top[1], top[2] + P.style];
+      if (P.stigma === 'capitate') {
+        var cap = ellipse2(tip[0], tip[1], 2.6, 2.6, 0, 14);
+        add({ part: 'stigma', role: 'stigma', outline: cap, strokes: [cap], details: [] }, tip[2] + 2);
+      } else if (P.stigma === 'lobed') {
+        for (var lb = 0; lb < P.carpels; lb++) {
+          var al = (lb / P.carpels) * TAU, lp = project([tip3[0] + 2.2 * Math.cos(al), tip3[1] + 2.2 * Math.sin(al), tip3[2]]);
+          var lob = ellipse2(lp[0], lp[1], 2.2, 1.5, Math.atan2(lp[1] - tip[1], lp[0] - tip[0]), 12);
+          add({ part: 'stigma', role: 'stigma', outline: lob, strokes: [lob], details: [] }, lp[2] + 2);
+        }
+      } else {
+        for (var br = 0; br < P.carpels; br++) {
+          var ab = (br / P.carpels) * TAU, bl = P.style * 0.22, line = [];
+          for (var v = 0; v <= 6; v++) {
+            var tv = v / 6;
+            line.push(xy(project([tip3[0] + bl * tv * Math.cos(ab), tip3[1] + bl * tv * Math.sin(ab), tip3[2] + bl * 0.5 * Math.sin(tv * 2.2)])));
+          }
+          add({ part: 'stigma', role: 'stigma', outline: ribbon(line, 0.9), strokes: [line], details: [] }, tip[2] + 1);
+        }
+      }
+    }
+
+    // --- stamens
+    var rb = Math.max(rc * 0.88, pistilR * 1.3), N2 = S.count;
+    var petalW = h.whorls[h.whorls.length - 1];
+    for (var si = 0; si < N2; si++) {
+      var as, rs;
+      if (S.spiral) {
+        as = si * GOLDEN_ANGLE;
+        rs = Math.sqrt(lerp(Math.pow(pistilR * 1.15, 2), rb * rb, (si + 0.5) / N2));
+      } else {
+        as = petalW.offset + (si / N2) * TAU + (N2 === petalW.count ? Math.PI / N2 : 0);
+        rs = lerp(pistilR * 1.15, rb, 0.55);
+      }
+      var outerF = clamp((rs - pistilR) / Math.max(rb - pistilR, 1e-6), 0, 1);
+      // stamens stay inside the corolla: at least as upright as the innermost petals, and shorter than them
+      var elev = Math.max(S.elevation - S.spread * outerF, petalW.cup + 0.15) + rng.gauss(0, 0.08);
+      var len = Math.min(S.length, petalW.length * 0.6) * lerp(1, 0.8, outerF) * (1 + rng.gauss(0, 0.08));
+      var dirx = Math.cos(as), diry = Math.sin(as), radial = rs, zz = 0, fil3 = [[radial * dirx, radial * diry, 0]];
+      for (var st2 = 1; st2 <= 10; st2++) {
+        var phi2 = elev - S.curve * (st2 / 10);
+        radial += Math.cos(phi2) * len / 10; zz += Math.sin(phi2) * len / 10;
+        fil3.push([radial * dirx, radial * diry, zz]);
+      }
+      var fil = fil3.map(project), fl = fil.map(xy);
+      add({ part: 'filament', role: 'filament', outline: ribbon(fl, 0.7), strokes: [], details: [fl] }, fil[5][2]);
+      var end = fil[fil.length - 1], prev = fil[fil.length - 3];
+      var rot2 = Math.atan2(end[1] - prev[1], end[0] - prev[0]);
+      var oblong = S.antherShape === 'oblong';
+      var an = ellipse2(end[0], end[1], S.anther * (oblong ? 1.5 : 1), S.anther * (oblong ? 0.7 : 0.8), oblong ? rot2 + Math.PI / 2 : rot2, 14);
+      var andet = oblong ? [[[end[0] - Math.cos(rot2 + Math.PI / 2) * S.anther * 1.2, end[1] - Math.sin(rot2 + Math.PI / 2) * S.anther * 1.2],
+                            [end[0] + Math.cos(rot2 + Math.PI / 2) * S.anther * 1.2, end[1] + Math.sin(rot2 + Math.PI / 2) * S.anther * 1.2]]] : [];
+      add({ part: 'anther', role: 'anther', outline: an, strokes: [an], details: andet }, end[2] + 0.5);
+    }
+    return items;
   }
 
   // ------------------------------------------------------------------ hidden-line removal
@@ -606,38 +914,84 @@
 
   function resolveOcclusion(items) {
     items.sort(function (a, b) { return b.depth - a.depth; }); // nearest first
-    var occ = [], lines = [];
+    var occ = [], lines = [], details = [];
     items.forEach(function (it) {
       it.strokes.forEach(function (s) { lines.push.apply(lines, clipPolyline(s, occ)); });
+      (it.details || []).forEach(function (s) { details.push.apply(details, clipPolyline(s, occ)); });
       occ.push(makeOccluder(it.outline));
     });
     // Color washes are painted farthest first, so nearer organs cover farther ones.
     var fills = items.slice().reverse().map(function (it) { return { role: it.role, poly: it.outline }; });
-    return { lines: lines, fills: fills };
+    return { lines: lines, details: details, fills: fills };
   }
 
   // ------------------------------------------------------------------ assembly & SVG
 
   // color: false gives lines only (pen-plotter output)
-  var DEFAULTS = { width: 600, height: 720, stroke: 0.9, labels: true, color: true };
+  var DEFAULTS = { width: 600, height: 720, stroke: 1.0, detailStroke: 0.45, labels: true, color: true };
 
   function draw(g, opts) {
     opts = Object.assign({}, DEFAULTS, opts);
-    var rng = makeRng(g.seed, 'draw.head');
-    var project = makeProjector(g.pose, opts.width / 2, opts.height * 0.43);
-    var items = [].concat(drawPerianth(g, rng, project), drawCenterPlaceholder(g, project));
+    var project = makeProjector(g.pose, 0, 0);
+    var items = [].concat(
+      drawPerianth(g, makeRng(g.seed, 'draw.head'), makeRng(g.seed, 'draw.veins'), project),
+      drawCenter(g, makeRng(g.seed, 'draw.center'), project)
+    );
     var res = resolveOcclusion(items);
-    var c = project([0, 0, 0]);
-    res.center = [c[0], c[1]];
+    res.center = [0, 0];
+    fitToPlate(res, opts);
     return res;
+  }
+
+  // Scale and center the drawing in the plate area above the caption.
+  function fitToPlate(res, opts) {
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    res.fills.forEach(function (f) {
+      f.poly.forEach(function (p) {
+        if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0];
+        if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1];
+      });
+    });
+    var m = 48, bottom = opts.labels ? 120 : m;
+    var bw = opts.width - 2 * m, bh = opts.height - m - bottom;
+    var k = Math.min(bw / (x1 - x0), bh / (y1 - y0), 1.6);
+    var tx = m + bw / 2 - ((x0 + x1) / 2) * k, ty = m + bh / 2 - ((y0 + y1) / 2) * k;
+    var T = function (p) { return [p[0] * k + tx, p[1] * k + ty]; };
+    var mapLines = function (ls) { return ls.map(function (l) { return l.map(T); }); };
+    res.lines = mapLines(res.lines);
+    res.details = mapLines(res.details);
+    res.fills.forEach(function (f) { f.poly = f.poly.map(T); });
+    res.center = T(res.center);
+    res.scale = k;
   }
 
   function escapeXml(s) {
     return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
   }
 
+  // Ramer-Douglas-Peucker: drop points that lie within `eps` of the simplified line.
+  function simplify(pts, eps) {
+    if (pts.length < 3) return pts;
+    var keep = new Uint8Array(pts.length), stack = [[0, pts.length - 1]];
+    keep[0] = keep[pts.length - 1] = 1;
+    while (stack.length) {
+      var seg = stack.pop(), a = pts[seg[0]], b = pts[seg[1]], dmax = 0, idx = -1;
+      var dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
+      for (var i = seg[0] + 1; i < seg[1]; i++) {
+        // closed loops start and end on the same point: measure distance to that point instead
+        var d = len < 1e-9 ? Math.hypot(pts[i][0] - a[0], pts[i][1] - a[1])
+                           : Math.abs(dy * (pts[i][0] - a[0]) - dx * (pts[i][1] - a[1])) / len;
+        if (d > dmax) { dmax = d; idx = i; }
+      }
+      if (dmax > eps) { keep[idx] = 1; stack.push([seg[0], idx], [idx, seg[1]]); }
+    }
+    return pts.filter(function (_, i) { return keep[i]; });
+  }
+
   function pointList(pts) {
-    return pts.map(function (p) { return round2(p[0]) + ' ' + round2(p[1]); }).join(' L');
+    pts = simplify(pts, 0.12);
+    // 0.1-unit precision: finer than any pen, and keeps files small
+    return pts.map(function (p) { return round1(p[0]) + ' ' + round1(p[1]); }).join(' L');
   }
 
   // Pastel wash under the linework, one gradient per color role.
@@ -645,13 +999,17 @@
     // gradient ids carry a seed hash so several flowers can share one SVG document
     var id = 'fd' + hash128(g.seed)[0].toString(36);
     var cx = round2(d.center[0]), cy = round2(d.center[1]);
-    var roles = { petal: g.head.radius, green: g.head.radius * 0.8, center: g.head.centerRadius * 1.2 };
+    var k = d.scale || 1;
+    var roles = { petal: g.head.radius * k, green: g.head.radius * 0.8 * k, center: g.head.centerRadius * 1.2 * k };
     var defs = Object.keys(roles).map(function (role) {
       var c = g.color[role];
       return '<radialGradient id="' + id + '-' + role + '" gradientUnits="userSpaceOnUse" cx="' + cx + '" cy="' + cy + '" r="' + round2(roles[role]) + '">' +
         '<stop offset="0" stop-color="' + c.inner + '"/><stop offset="1" stop-color="' + c.outer + '"/></radialGradient>';
     });
-    var shapes = d.fills.map(function (f) { return '<path fill="url(#' + id + '-' + f.role + ')" d="M' + pointList(f.poly) + 'Z"/>'; });
+    var shapes = d.fills.map(function (f) {
+      var paint = roles[f.role] != null ? 'url(#' + id + '-' + f.role + ')' : g.color.flat[f.role];
+      return '<path fill="' + paint + '" d="M' + pointList(f.poly) + 'Z"/>';
+    });
     return ['<defs>' + defs.join('') + '</defs>', '<g id="color" stroke="none">', shapes.join('\n'), '</g>'];
   }
 
@@ -664,7 +1022,13 @@
       '<rect width="' + W + '" height="' + H + '" fill="' + (opts.color ? '#fbf8f1' : 'white') + '"/>',
     ];
     if (opts.color) out.push.apply(out, colorLayer(g, d));
+    var detailPaths = (d.details || []).map(function (l) { return '<path d="M' + pointList(l) + '"/>'; });
+    // two pens: fine detail (veins, shading, filaments) under the outlines
     out.push(
+      '<g id="detail" fill="none" stroke="' + (opts.color ? '#4e423b' : 'black') + '" stroke-opacity="' + (opts.color ? 0.75 : 1) +
+        '" stroke-width="' + opts.detailStroke + '" stroke-linecap="round" stroke-linejoin="round">',
+      detailPaths.join('\n'),
+      '</g>',
       '<g id="drawing" fill="none" stroke="' + (opts.color ? '#2b2522' : 'black') + '" stroke-width="' + opts.stroke + '" stroke-linecap="round" stroke-linejoin="round">',
       paths.join('\n'),
       '</g>'
@@ -687,13 +1051,13 @@
   function generate(seed, opts) {
     var g = makeGenome(seed);
     var d = draw(g, opts);
-    return { genome: g, lines: d.lines, fills: d.fills, svg: toSVG(g, d, opts) };
+    return { genome: g, lines: d.lines, details: d.details, fills: d.fills, svg: toSVG(g, d, opts) };
   }
 
   var api = {
     generate: generate, makeGenome: makeGenome, draw: draw, toSVG: toSVG,
     formatFormula: formatFormula, makeRng: makeRng, GOLDEN_ANGLE: GOLDEN_ANGLE,
-    _internal: { drawPerianth: drawPerianth, drawCenterPlaceholder: drawCenterPlaceholder, makeProjector: makeProjector, insidePoly: insidePoly, petalOutline: petalOutline },
+    _internal: { drawPerianth: drawPerianth, drawCenter: drawCenter, makeProjector: makeProjector, insidePoly: insidePoly, petalOutline: petalOutline },
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
