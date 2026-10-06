@@ -2,7 +2,7 @@
 //   node tools/sheet.js rose lily 42 daisy > sheet.svg
 //   node tools/sheet.js --count 12 > sheet.svg      (seeds 1..12)
 // Options: --cols N (default 3), --mono (lines only), --bare (no "seed …" captions)
-const fd = require('../flowerdraw.js');
+const fd = require('../petaldraw.js');
 
 const argv = process.argv.slice(2);
 const flag = (name) => argv.includes('--' + name);

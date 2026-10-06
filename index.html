@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>flowerdraw</title>
+<title>petaldraw</title>
 <style>
   :root {
     --page: #ece6da;
@@ -101,7 +101,7 @@
 </head>
 <body>
 <header>
-  <h1>flowerdraw</h1>
+  <h1>petaldraw</h1>
   <p>Procedurally generated botanical flowers. Every seed grows one specimen.</p>
 </header>
 
@@ -141,7 +141,7 @@
   </aside>
 </main>
 
-<script src="flowerdraw.js"></script>
+<script src="petaldraw.js"></script>
 <script>
   var $ = function (id) { return document.getElementById(id); };
   var current = null, recent = [];
@@ -166,7 +166,7 @@
 
   function render(seed) {
     seed = String(seed).trim() || String(Math.floor(Math.random() * 1e9));
-    current = flowerdraw.generate(seed, { color: $('color').checked, labels: true });
+    current = petaldraw.generate(seed, { color: $('color').checked, labels: true });
     var g = current.genome;
     $('plate').innerHTML = current.svg;
     $('name').textContent = g.name.full;
@@ -179,7 +179,7 @@
     $('genome').textContent = JSON.stringify(g, function (k, v) { return v === Infinity ? 'Infinity' : v; }, 2);
     $('seed').value = seed;
     history.replaceState(null, '', '#' + encodeURIComponent(seed));
-    document.title = g.name.full + ' · flowerdraw';
+    document.title = g.name.full + ' · petaldraw';
 
     recent = [seed].concat(recent.filter(function (s) { return s !== seed; })).slice(0, 12);
     $('recent').innerHTML = '';
@@ -208,7 +208,7 @@
   $('download').onclick = function () {
     var a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([current.svg], { type: 'image/svg+xml' }));
-    a.download = 'flowerdraw-' + current.genome.seed + ($('color').checked ? '' : '-mono') + '.svg';
+    a.download = 'petaldraw-' + current.genome.seed + ($('color').checked ? '' : '-mono') + '.svg';
     a.click();
   };
   document.addEventListener('keydown', function (e) {

@@ -1,11 +1,11 @@
 /*
- * flowerdraw — procedural botanical flowers in a pen-plotter / engraving style.
+ * petaldraw — procedural botanical flowers in a pen-plotter / engraving style.
  * Inspired by Lingdong Huang's fishdraw.
  *
  * Single file, no dependencies. Works in the browser (<script src>) and in Node:
- *   node flowerdraw.js --seed "Rosa" > rosa.svg
- *   node flowerdraw.js --seed 42 --genome        (print the genome as JSON)
- *   node flowerdraw.js --seed 42 --mono          (lines only, for pen plotters)
+ *   node petaldraw.js --seed "Rosa" > rosa.svg
+ *   node petaldraw.js --seed 42 --genome        (print the genome as JSON)
+ *   node petaldraw.js --seed 42 --mono          (lines only, for pen plotters)
  *
  * Pipeline:  seed -> genome (floral formula first, then morphology) -> parts -> occlusion -> SVG
  *
@@ -697,7 +697,7 @@
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  else root.flowerdraw = api;
+  else root.petaldraw = api;
 
   // ------------------------------------------------------------------ CLI
 
