@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flowerdraw</title>
+<style>
+  :root {
+    --page: #ece6da;
+    --panel: #f8f5ee;
+    --ink: #2b2522;
+    --muted: #7a6f66;
+    --line: #d8cfc0;
+    --accent: #8a5a6b;
+    --accent-ink: #fff;
+    --shadow: 0 1px 2px rgba(60, 40, 20, .08), 0 8px 28px rgba(60, 40, 20, .12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #1d1b18;
+      --panel: #282521;
+      --ink: #ece6da;
+      --muted: #a39887;
+      --line: #3d3832;
+      --accent: #c99aaa;
+      --accent-ink: #1d1b18;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 28px rgba(0, 0, 0, .35);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: var(--page); color: var(--ink);
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
+  }
+  button, input { font: inherit; color: inherit; }
+
+  header {
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+    max-width: 1120px; margin: 0 auto; padding: 22px 16px 6px;
+  }
+  header h1 { margin: 0; font-size: 28px; font-weight: normal; font-style: italic; letter-spacing: .01em; }
+  header p { margin: 0; color: var(--muted); font-size: 15px; }
+
+  .toolbar {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    max-width: 1120px; margin: 0 auto; padding: 12px 16px;
+  }
+  .seed {
+    display: flex; align-items: center; flex: 1 1 260px; max-width: 380px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  }
+  .seed span { padding: 0 10px; color: var(--muted); font-size: 14px; }
+  .seed input { flex: 1; min-width: 0; border: 0; background: transparent; padding: 8px 4px; outline: none; }
+  .seed:focus-within { border-color: var(--accent); }
+  .btn {
+    border: 1px solid var(--line); background: var(--panel); border-radius: 8px;
+    padding: 8px 14px; cursor: pointer; font-size: 15px; white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .switch { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 15px; padding: 0 6px; user-select: none; }
+  .switch input { appearance: none; width: 34px; height: 20px; border-radius: 10px; background: var(--line); position: relative; cursor: pointer; margin: 0; transition: background .15s; }
+  .switch input::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .switch input:checked { background: var(--accent); }
+  .switch input:checked::after { transform: translateX(14px); }
+  .spacer { flex: 1; }
+
+  main {
+    display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px;
+    max-width: 1120px; margin: 0 auto; padding: 8px 16px 40px;
+  }
+  @media (max-width: 820px) { main { grid-template-columns: minmax(0, 1fr); } }
+
+  .plate { background: #fbf8f1; border-radius: 4px; box-shadow: var(--shadow); padding: 12px; }
+  .plate svg { display: block; width: 100%; height: auto; max-height: 78vh; }
+
+  aside { display: flex; flex-direction: column; gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  .card h2 { margin: 0 0 4px; font-size: 22px; font-weight: normal; font-style: italic; }
+  .formula { font-size: 17px; color: var(--muted); }
+  .label { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: 15px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; }
+  .swatches { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .swatch { width: 26px; height: 26px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, .12); }
+  .swatches .name { margin-left: 4px; font-size: 15px; }
+  .recent { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    border: 1px solid var(--line); background: transparent; border-radius: 14px;
+    padding: 3px 10px; font-size: 13px; cursor: pointer; max-width: 140px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .chip:hover, .chip.current { border-color: var(--accent); color: var(--accent); }
+  details summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+  pre { font-size: 11px; max-height: 50vh; overflow: auto; margin: 10px 0 0; white-space: pre; }
+  .hint { color: var(--muted); font-size: 13px; }
+  kbd { font-family: inherit; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>flowerdraw</h1>
+  <p>Procedurally generated botanical flowers. Every seed grows one specimen.</p>
+</header>
+
+<div class="toolbar">
+  <label class="seed"><span>seed</span><input id="seed" spellcheck="false" autocomplete="off"></label>
+  <button class="btn primary" id="go">Draw</button>
+  <button class="btn" id="random" title="Random seed (R)">Random</button>
+  <label class="switch"><input type="checkbox" id="color" checked> Color</label>
+  <span class="spacer"></span>
+  <button class="btn" id="copy">Copy link</button>
+  <button class="btn" id="download">Download SVG</button>
+</div>
+
+<main>
+  <div class="plate" id="plate"></div>
+  <aside>
+    <div class="card">
+      <h2 id="name"></h2>
+      <div class="formula" id="formula"></div>
+    </div>
+    <div class="card">
+      <div class="label">Specimen</div>
+      <dl id="traits"></dl>
+    </div>
+    <div class="card">
+      <div class="label">Palette</div>
+      <div class="swatches" id="swatches"></div>
+    </div>
+    <div class="card">
+      <div class="label">Recent</div>
+      <div class="recent" id="recent"></div>
+    </div>
+    <div class="card">
+      <details><summary>Raw genome</summary><pre id="genome"></pre></details>
+    </div>
+    <div class="hint"><kbd>R</kbd> random seed &nbsp; <kbd>Enter</kbd> draw typed seed</div>
+  </aside>
+</main>
+
+<script src="flowerdraw.js"></script>
+<script>
+  var $ = function (id) { return document.getElementById(id); };
+  var current = null, recent = [];
+
+  function describe(g) {
+    var f = g.formula, h = g.head, main = h.whorls[h.whorls.length - 1], s = main.shape;
+    var many = function (n) { return n === Infinity ? 'many' : n; };
+    var form;
+    if (h.type === 'radiate') form = 'Composite head, ' + main.count + ' ray florets';
+    else if (f.P) form = (f.P.n * 2) + ' tepals in two whorls';
+    else if (h.type === 'double') form = 'Double, ' + f.C.whorls + ' whorls of ' + f.C.n + ' petals';
+    else form = f.C.n + (f.C.fused ? ' fused petals' : ' petals') + ', ' + f.K.n + (f.K.fused ? ' fused sepals' : ' sepals');
+    var symmetry = h.zygo ? 'Bilateral (' + (h.zygo.mode === 'banner' ? 'upper banner petal' : 'lower lip') + ')' : 'Radial';
+    var tip = s.tip === 'frilled' ? (s.frill.style === 'fringed' ? 'Fringed' : 'Ruffled')
+      : { pointed: 'Pointed', rounded: 'Rounded', notched: 'Notched', toothed: 'Three-toothed' }[s.tip];
+    var c = main.cup;
+    var profile = c < 0 ? 'Swept back' : c < 0.25 ? 'Flat' : c < 0.6 ? 'Shallow cup' : c < 1 ? 'Bowl' : 'Upright cup';
+    if (main.curl < -0.6) profile += ', tips curled back';
+    var ovary = (f.G.position === 'superior' ? 'Superior' : 'Inferior') + ', ' + many(f.G.n) + ' carpel' + (f.G.n === 1 ? '' : 's');
+    return [['Form', form], ['Symmetry', symmetry], ['Petal tip', tip], ['Profile', profile], ['Stamens', many(f.A.n)], ['Ovary', ovary]];
+  }
+
+  function render(seed) {
+    seed = String(seed).trim() || String(Math.floor(Math.random() * 1e9));
+    current = flowerdraw.generate(seed, { color: $('color').checked, labels: true });
+    var g = current.genome;
+    $('plate').innerHTML = current.svg;
+    $('name').textContent = g.name.full;
+    $('formula').textContent = g.formulaText;
+    $('traits').innerHTML = describe(g).map(function (r) { return '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>'; }).join('');
+    var col = g.color;
+    $('swatches').innerHTML = [col.petal.inner, col.petal.outer, col.green.inner, col.center.inner]
+      .map(function (c) { return '<span class="swatch" style="background:' + c + '" title="' + c + '"></span>'; }).join('') +
+      '<span class="name">' + col.family.charAt(0).toUpperCase() + col.family.slice(1) + (col.petal.eye ? ', contrasting eye' : '') + '</span>';
+    $('genome').textContent = JSON.stringify(g, function (k, v) { return v === Infinity ? 'Infinity' : v; }, 2);
+    $('seed').value = seed;
+    history.replaceState(null, '', '#' + encodeURIComponent(seed));
+    document.title = g.name.full + ' · flowerdraw';
+
+    recent = [seed].concat(recent.filter(function (s) { return s !== seed; })).slice(0, 12);
+    $('recent').innerHTML = '';
+    recent.forEach(function (s) {
+      var b = document.createElement('button');
+      b.className = 'chip' + (s === seed ? ' current' : '');
+      b.textContent = s; b.title = s;
+      b.onclick = function () { render(s); };
+      $('recent').appendChild(b);
+    });
+  }
+
+  function randomSeed() { render(String(Math.floor(Math.random() * 1e9))); }
+
+  $('go').onclick = function () { render($('seed').value); };
+  $('seed').onkeydown = function (e) { if (e.key === 'Enter') render(this.value); };
+  $('random').onclick = randomSeed;
+  $('color').onchange = function () { render(current.genome.seed); };
+  $('copy').onclick = function () {
+    var btn = this;
+    navigator.clipboard.writeText(location.href).then(function () {
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = 'Copy link'; }, 1200);
+    });
+  };
+  $('download').onclick = function () {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([current.svg], { type: 'image/svg+xml' }));
+    a.download = 'flowerdraw-' + current.genome.seed + ($('color').checked ? '' : '-mono') + '.svg';
+    a.click();
+  };
+  document.addEventListener('keydown', function (e) {
+    if (e.target.tagName === 'INPUT' || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === 'r' || e.key === 'R') randomSeed();
+  });
+  window.addEventListener('hashchange', function () {
+    var s = decodeURIComponent(location.hash.slice(1));
+    if (s && (!current || s !== current.genome.seed)) render(s);
+  });
+
+  render(location.hash ? decodeURIComponent(location.hash.slice(1)) : String(Math.floor(Math.random() * 1e9)));
+</script>
+</body>
+</html>
