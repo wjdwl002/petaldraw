@@ -74,6 +74,15 @@
 
   .plate { background: #fbf8f1; border-radius: 4px; box-shadow: var(--shadow); padding: 12px; }
   .plate svg { display: block; width: 100%; height: auto; max-height: 78vh; }
+  .plate { position: relative; }
+  .plate.three { cursor: grab; touch-action: none; user-select: none; }
+  .plate.three.dragging { cursor: grabbing; }
+  .badge {
+    display: none; position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
+    background: rgba(43, 37, 34, .72); color: #fbf8f1; font-size: 13px; padding: 4px 12px; border-radius: 12px;
+    pointer-events: none; white-space: nowrap;
+  }
+  .plate.three .badge { display: block; }
 
   aside { display: flex; flex-direction: column; gap: 14px; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
@@ -110,13 +119,14 @@
   <button class="btn primary" id="go">Draw</button>
   <button class="btn" id="random" title="Random seed (R)">Random</button>
   <label class="switch"><input type="checkbox" id="color" checked> Color</label>
+  <label class="switch" title="Rotate the flower in 3D (D)"><input type="checkbox" id="three"> 3D</label>
   <span class="spacer"></span>
   <button class="btn" id="copy">Copy link</button>
   <button class="btn" id="download">Download SVG</button>
 </div>
 
 <main>
-  <div class="plate" id="plate"></div>
+  <div class="plate" id="plate"><div id="svg"></div><div class="badge">Drag to rotate · double-click to reset</div></div>
   <aside>
     <div class="card">
       <h2 id="name"></h2>
@@ -137,7 +147,7 @@
     <div class="card">
       <details><summary>Raw genome</summary><pre id="genome"></pre></details>
     </div>
-    <div class="hint"><kbd>R</kbd> random seed &nbsp; <kbd>Enter</kbd> draw typed seed</div>
+    <div class="hint"><kbd>R</kbd> random seed &nbsp; <kbd>D</kbd> 3D &nbsp; <kbd>Enter</kbd> draw typed seed</div>
   </aside>
 </main>
 
@@ -164,11 +174,22 @@
     return [['Form', form], ['Symmetry', symmetry], ['Petal tip', tip], ['Profile', profile], ['Stamens', many(f.A.n)], ['Ovary', ovary]];
   }
 
+  // 3D mode: the viewer orbits the flower; every frame is re-projected with hidden-line removal.
+  var view = { yaw: 0, pitch: 0 }, spinning = true, dirty = false, drag = null;
+
+  function drawPlate() {
+    var g = current.genome, opts = { color: $('color').checked, labels: true };
+    if ($('three').checked) opts.view = view;
+    current.svg = petaldraw.toSVG(g, petaldraw.draw(g, opts), opts);
+    $('svg').innerHTML = current.svg;
+  }
+
   function render(seed) {
     seed = String(seed).trim() || String(Math.floor(Math.random() * 1e9));
-    current = petaldraw.generate(seed, { color: $('color').checked, labels: true });
+    current = { genome: petaldraw.makeGenome(seed) };
+    view = { yaw: 0, pitch: 0 }; spinning = true;
+    drawPlate();
     var g = current.genome;
-    $('plate').innerHTML = current.svg;
     $('name').textContent = g.name.full;
     $('formula').textContent = g.formulaText;
     $('traits').innerHTML = describe(g).map(function (r) { return '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>'; }).join('');
@@ -197,7 +218,43 @@
   $('go').onclick = function () { render($('seed').value); };
   $('seed').onkeydown = function (e) { if (e.key === 'Enter') render(this.value); };
   $('random').onclick = randomSeed;
-  $('color').onchange = function () { render(current.genome.seed); };
+  $('color').onchange = drawPlate;
+  function setThree(on) {
+    $('three').checked = on;
+    $('plate').classList.toggle('three', on);
+    view = { yaw: 0, pitch: 0 }; spinning = true;
+    drawPlate();
+  }
+  $('three').onchange = function () { setThree(this.checked); };
+
+  var plate = $('plate');
+  plate.addEventListener('pointerdown', function (e) {
+    if (!$('three').checked) return;
+    drag = { x: e.clientX, y: e.clientY, yaw: view.yaw, pitch: view.pitch };
+    spinning = false;
+    plate.classList.add('dragging');
+    plate.setPointerCapture(e.pointerId);
+  });
+  plate.addEventListener('pointermove', function (e) {
+    if (!drag) return;
+    view.yaw = drag.yaw + (e.clientX - drag.x) * 0.01;
+    view.pitch = Math.max(-1.5, Math.min(1.5, drag.pitch + (e.clientY - drag.y) * 0.01));
+    dirty = true;
+  });
+  var endDrag = function () { drag = null; plate.classList.remove('dragging'); };
+  plate.addEventListener('pointerup', endDrag);
+  plate.addEventListener('pointercancel', endDrag);
+  plate.addEventListener('dblclick', function () {
+    if (!$('three').checked) return;
+    view = { yaw: 0, pitch: 0 }; spinning = true; dirty = true;
+  });
+  (function tick() {
+    if ($('three').checked && current) {
+      if (spinning && !drag) { view.yaw += 0.01; dirty = true; }
+      if (dirty) { dirty = false; drawPlate(); }
+    }
+    requestAnimationFrame(tick);
+  })();
   $('copy').onclick = function () {
     var btn = this;
     navigator.clipboard.writeText(location.href).then(function () {
@@ -208,12 +265,13 @@
   $('download').onclick = function () {
     var a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([current.svg], { type: 'image/svg+xml' }));
-    a.download = 'petaldraw-' + current.genome.seed + ($('color').checked ? '' : '-mono') + '.svg';
+    a.download = 'petaldraw-' + current.genome.seed + ($('three').checked ? '-3d' : '') + ($('color').checked ? '' : '-mono') + '.svg';
     a.click();
   };
   document.addEventListener('keydown', function (e) {
     if (e.target.tagName === 'INPUT' || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'r' || e.key === 'R') randomSeed();
+    if (e.key === 'd' || e.key === 'D') setThree(!$('three').checked);
   });
   window.addEventListener('hashchange', function () {
     var s = decodeURIComponent(location.hash.slice(1));

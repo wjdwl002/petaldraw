@@ -16,6 +16,9 @@ invented Latin name.
 No dependencies, no install.
 
 **Browser:** open `index.html`. Type a seed or press **R** for a random one.
+Turn on **3D** (or press **D**) to drag the flower around and see it from any
+angle, including from the side and from behind. Each frame is drawn again with
+hidden lines removed, so it keeps the engraved look.
 
 **Command line** (Node):
 
@@ -23,6 +26,7 @@ No dependencies, no install.
 node petaldraw.js --seed rose > rose.svg      # one flower
 node petaldraw.js --seed rose --mono > r.svg  # line art only, for pen plotters
 node petaldraw.js --seed rose --genome        # the flower's parameters as JSON
+node petaldraw.js --seed rose --yaw 60 --pitch -20 > side.svg   # another viewing angle (degrees)
 node tools/sheet.js 1 2 3 rose > sheet.svg    # several flowers on one sheet
 ```
 

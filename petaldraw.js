@@ -6,6 +6,7 @@
  *   node petaldraw.js --seed "Rosa" > rosa.svg
  *   node petaldraw.js --seed 42 --genome        (print the genome as JSON)
  *   node petaldraw.js --seed 42 --mono          (lines only, for pen plotters)
+ *   node petaldraw.js --seed 42 --yaw 60 --pitch -20   (view from another angle, degrees)
  *
  * Pipeline:  seed -> genome (floral formula first, then morphology) -> parts -> occlusion -> SVG
  *
@@ -629,24 +630,37 @@
     return [radial * c - p[1] * s, radial * s + p[1] * c, z];
   }
 
-  // flower space -> screen. spin about the flower axis, tilt the face up/away, roll in the picture plane.
-  function makeProjector(pose, cx, cy) {
+  // flower space -> screen. spin about the flower axis, tilt the face up/away, roll in the picture plane,
+  // then the optional viewer orbit: yaw about the screen's vertical axis, pitch about its horizontal axis.
+  // project.maxR records the largest distance from the flower origin seen so far, so a rotating view can
+  // use one fixed scale that keeps the whole flower on the plate at every angle.
+  function makeProjector(pose, cx, cy, view) {
     var cs = Math.cos(pose.spin), ss = Math.sin(pose.spin);
     var ct = Math.cos(pose.tilt), st = Math.sin(pose.tilt);
     var cr = Math.cos(pose.roll), sr = Math.sin(pose.roll);
-    return function (p) {
+    var yaw = view ? view.yaw || 0 : 0, pitch = view ? view.pitch || 0 : 0;
+    var cy1 = Math.cos(yaw), sy1 = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+    var project = function (p) {
+      var r = Math.hypot(p[0], p[1], p[2]);
+      if (r > project.maxR) project.maxR = r;
       var x1 = p[0] * cs - p[1] * ss, y1 = p[0] * ss + p[1] * cs, z1 = p[2];
       var y2 = y1 * ct + z1 * st, z2 = -y1 * st + z1 * ct;
       var x3 = x1 * cr - y2 * sr, y3 = x1 * sr + y2 * cr;
-      return [cx + x3, cy - y3, z2]; // [screen x, screen y, depth toward viewer]
+      var x4 = x3 * cy1 + z2 * sy1, z4 = -x3 * sy1 + z2 * cy1;
+      var y5 = y3 * cp + z4 * sp, z5 = -y3 * sp + z4 * cp;
+      return [cx + x4, cy - y5, z5]; // [screen x, screen y, depth toward viewer]
     };
+    project.maxR = 0;
+    // > 0 when the front of the flower faces the viewer, < 0 when seen from behind
+    project.facing = function () { return project([0, 0, 1])[2] - project([0, 0, 0])[2]; };
+    return project;
   }
 
   // ------------------------------------------------------------------ anatomical parts
 
   // Step 1: perianth whorls (bracts, sepals, petals, tepals, rays). One item per organ.
   function drawPerianth(g, rng, vrng, project) {
-    var h = g.head, items = [];
+    var h = g.head, items = [], front = project.facing() >= 0 ? 1 : -1;
     h.whorls.forEach(function (w) {
       for (var i = 0; i < w.count; i++) {
         var theta = w.offset + (i * TAU) / w.count + rng.gauss(0, w.jitter * 0.35 * (TAU / w.count));
@@ -667,7 +681,7 @@
         var mid = project(bendPoint([L * 0.5, 0], sp, w.r0, theta, shape.cupAcross, W));
         // Same-whorl organs at equal depth are ordered by aestivation:
         // imbricate/contort -> each organ slightly above the previous one.
-        var bias = w.layer * 0.5 + (h.aestivation === 'valvate' ? 0 : (i / w.count) * 0.3);
+        var bias = front * (w.layer * 0.5 + (h.aestivation === 'valvate' ? 0 : (i / w.count) * 0.3));
         var poly = scr.map(function (p) { return [p[0], p[1]]; });
         var green = w.organ === 'sepal' || w.organ === 'bract';
         var veins = petalVeins(shape, L, outline, vrng, g.detail, { shade: !green, maxVeins: w.organ === 'bract' ? 1 : green ? 3 : 9 });
@@ -702,12 +716,18 @@
       }
       return pts;
     };
-    var rimDepth = circle3(0, 0, 0, rc, 48).reduce(function (m, p, i) {
-      var a = (i / 48) * TAU; return Math.max(m, project([rc * Math.cos(a), rc * Math.sin(a), 0])[2]);
+    // Seen from behind (facing < 0) everything flips: the receptacle sits behind the petal
+    // bases and the stamens and pistil sit behind the receptacle.
+    var facing = project.facing(), front = facing >= 0 ? 1 : -1;
+    var rimDepth = front * circle3(0, 0, 0, rc, 48).reduce(function (m, p, i) {
+      var a = (i / 48) * TAU; return Math.max(m, front * project([rc * Math.cos(a), rc * Math.sin(a), 0])[2]);
     }, -Infinity);
-    var recDepth = rimDepth + rc;
+    var bias = rc * front;
+    var recDepth = rimDepth + bias;
     var add = function (it, d) {
-      it.depth = d === 'receptacle' ? recDepth : Math.max(d + rc, recDepth + 0.01 + 0.001 * d);
+      it.depth = d === 'receptacle' ? recDepth
+        : front > 0 ? Math.max(d + bias, recDepth + 0.01 + 0.001 * d)
+        : Math.min(d + bias, recDepth - 0.01 + 0.001 * d);
       items.push(it);
     };
     // thin occluder around a projected polyline so lines behind a filament or style are hidden
@@ -727,7 +747,7 @@
       var D = c.disc, Rd = rc * 1.05, hd = Rd * D.dome, sp = Rd * D.floretSize;
       var N = Math.round(Math.pow(Rd / sp, 2) * 0.9);
       var rim = circle3(0, 0, 0, Rd, 72);
-      add({ part: 'disc', role: 'center', outline: rim, strokes: [], details: [] }, 'receptacle');
+      add({ part: 'disc', role: front > 0 ? 'center' : 'green', outline: rim, strokes: [], details: [] }, 'receptacle');
       for (var i = 0; i < N; i++) {
         var rr = Rd * Math.sqrt((i + 0.5) / N), a = i * GOLDEN_ANGLE, z = hd * (1 - (rr / Rd) * (rr / Rd));
         var x = rr * Math.cos(a), y = rr * Math.sin(a), size = sp * 0.5 * (0.75 + 0.35 * rr / Rd);
@@ -747,7 +767,8 @@
     // receptacle / nectary disc under the stamens
     // slightly larger than the petal attachment radius so no background shows between them
     var rec = circle3(0, 0, 0, rc * 1.08, 60);
-    add({ part: 'receptacle', role: 'center', outline: rec, strokes: [rec], details: [] }, 'receptacle');
+    // from behind this is the green underside of the flower base
+    add({ part: 'receptacle', role: front > 0 ? 'center' : 'green', outline: rec, strokes: [rec], details: [] }, 'receptacle');
 
     // --- pistil
     var ov = P.ovary, pistilR = ov, top = [0, 0, 0];
@@ -930,22 +951,27 @@
   // color: false gives lines only (pen-plotter output)
   var DEFAULTS = { width: 600, height: 720, stroke: 1.0, detailStroke: 0.45, labels: true, color: true };
 
+  // opts.view = { yaw, pitch } (radians) rotates the viewer around the flower (3D mode).
+  // With a view the plate uses a fixed scale, so the flower does not resize while it turns.
   function draw(g, opts) {
     opts = Object.assign({}, DEFAULTS, opts);
-    var project = makeProjector(g.pose, 0, 0);
+    var project = makeProjector(g.pose, 0, 0, opts.view);
     var items = [].concat(
       drawPerianth(g, makeRng(g.seed, 'draw.head'), makeRng(g.seed, 'draw.veins'), project),
       drawCenter(g, makeRng(g.seed, 'draw.center'), project)
     );
     var res = resolveOcclusion(items);
     res.center = [0, 0];
-    fitToPlate(res, opts);
+    fitToPlate(res, opts, opts.view ? project.maxR : 0);
     return res;
   }
 
   // Scale and center the drawing in the plate area above the caption.
-  function fitToPlate(res, opts) {
+  // radius > 0: fixed fit for a sphere of that radius around the flower origin (3D mode).
+  function fitToPlate(res, opts, radius) {
     var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    if (radius) { x0 = y0 = -radius; x1 = y1 = radius; }
+    else
     res.fills.forEach(function (f) {
       f.poly.forEach(function (p) {
         if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0];
@@ -954,7 +980,7 @@
     });
     var m = 48, bottom = opts.labels ? 120 : m;
     var bw = opts.width - 2 * m, bh = opts.height - m - bottom;
-    var k = Math.min(bw / (x1 - x0), bh / (y1 - y0), 1.6);
+    var k = Math.min(bw / (x1 - x0), bh / (y1 - y0), radius ? Infinity : 1.6);
     var tx = m + bw / 2 - ((x0 + x1) / 2) * k, ty = m + bh / 2 - ((y0 + y1) / 2) * k;
     var T = function (p) { return [p[0] * k + tx, p[1] * k + ty]; };
     var mapLines = function (ls) { return ls.map(function (l) { return l.map(T); }); };
@@ -1074,7 +1100,9 @@
       }
     }
     var seed = args.seed != null ? String(args.seed) : String(Math.floor(Math.random() * 1e9));
-    var res = generate(seed, { color: !args.mono });
+    var view = args.yaw != null || args.pitch != null
+      ? { yaw: (Number(args.yaw) || 0) * Math.PI / 180, pitch: (Number(args.pitch) || 0) * Math.PI / 180 } : null;
+    var res = generate(seed, { color: !args.mono, view: view });
     process.stderr.write('seed: ' + seed + '  ' + res.genome.name.full + '  ' + res.genome.formulaText + '\n');
     var text = args.genome ? JSON.stringify(res.genome, (k, v) => (v === Infinity ? 'Infinity' : v), 2) : res.svg;
     if (args.out) require('fs').writeFileSync(args.out, text);
