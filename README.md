@@ -9,7 +9,7 @@ sets its petal count, symmetry and structure. It is then drawn as single-stroke
 line art, with veined petals, stamens and pistil, and pastel color, and gets an
 invented Latin name.
 
-![Six generated flowers](docs/gallery.svg)
+![Nine generated flowers](docs/gallery.svg)
 
 ## Usage
 
